@@ -1,0 +1,20 @@
+{
+  "name": "dev.terrorized.facial-gesture-generator",
+  "displayName": "Facial Expression Controller Generator",
+  "version": "1.0.0",
+  "description": "A Unity editor tool that generates a VRChat facial expression / hand gesture animator controller layer.",
+  "url": "https://github.com/iTerrorized/dev.terrorized.facial-gesture-generator",
+  "unity": "2022.3",
+  "type": "tool",
+  "keywords": [
+    "Terrorized",
+    "Facial",
+    "Gesture",
+    "VRChat"
+  ],
+  "author": {
+    "name": "Terrorized",
+    "email": "xterrorized@outlook.com",
+    "url": "https://terrorized.dev"
+  }
+}
