@@ -23,6 +23,11 @@ namespace Terrorized.Editor
         private bool enableHeadpatDuringFaceTracking = false;
         private bool enableBoopDuringFaceTracking = false;
 
+        // Manual Gestures
+        private bool enableManualGestures = false;
+        private int manualGestureCount = 1;
+        private const string ManualGestureParam = "ManualGesture";
+
         // Gesture definitions
         private static readonly string[] GestureNames = new string[]
         {
@@ -38,6 +43,7 @@ namespace Terrorized.Editor
         // State references for transition creation
         private AnimatorState idleState;
         private Dictionary<string, AnimatorState> gestureStates = new Dictionary<string, AnimatorState>();
+        private List<AnimatorState> manualStates = new List<AnimatorState>();
 
         [MenuItem("Terrorized/Tools/Facial Expression Controller Generator")]
         public static void ShowWindow()
@@ -128,6 +134,25 @@ namespace Terrorized.Editor
                     enableBoopDuringFaceTracking = EditorGUILayout.Toggle(new GUIContent("Allow During Face Tracking",
                         "Allows Boop to work during face tracking (creates Boop_FT state)"),
                         enableBoopDuringFaceTracking);
+                    EditorGUI.indentLevel--;
+                }
+            });
+
+            EditorGUILayout.Space(5);
+
+            // Manual Gestures Section
+            DrawSection("Manual Gestures", () =>
+            {
+                enableManualGestures = EditorGUILayout.Toggle(new GUIContent("Enable Manual Gestures",
+                    "Adds a ManualGesture int. At 0 the normal face logic runs, at any higher value the matching Manual state is forced"),
+                    enableManualGestures);
+
+                if (enableManualGestures)
+                {
+                    EditorGUI.indentLevel++;
+                    manualGestureCount = Mathf.Clamp(EditorGUILayout.IntField(new GUIContent("Manual Gesture Count",
+                        "Number of manual gesture states to create (ManualGesture = 1 to this value)"),
+                        manualGestureCount), 1, 255);
                     EditorGUI.indentLevel--;
                 }
             });
@@ -251,7 +276,6 @@ namespace Terrorized.Editor
             {
                 controller.AddParameter("Utility/Headpat", AnimatorControllerParameterType.Bool);
                 controller.AddParameter("AD/Headpat", AnimatorControllerParameterType.Bool);
-                controller.AddParameter("AD/HeadpatSync", AnimatorControllerParameterType.Bool);
                 controller.AddParameter("Utility/HeadpatSync", AnimatorControllerParameterType.Bool);
             }
 
@@ -260,8 +284,13 @@ namespace Terrorized.Editor
             {
                 controller.AddParameter("Utility/Boop", AnimatorControllerParameterType.Bool);
                 controller.AddParameter("AD/Boop", AnimatorControllerParameterType.Bool);
-                controller.AddParameter("AD/BoopSync", AnimatorControllerParameterType.Bool);
                 controller.AddParameter("Utility/BoopSync", AnimatorControllerParameterType.Bool);
+            }
+
+            // Manual gesture parameter
+            if (enableManualGestures)
+            {
+                controller.AddParameter(ManualGestureParam, AnimatorControllerParameterType.Int);
             }
         }
 
@@ -304,6 +333,29 @@ namespace Terrorized.Editor
 
             // Create Avatar Dynamics states
             CreateAvatarDynamicsStates(sm);
+
+            // Create Manual Gesture states
+            CreateManualGestureStates(sm);
+        }
+
+        private void CreateManualGestureStates(AnimatorStateMachine sm)
+        {
+            manualStates.Clear();
+
+            if (!enableManualGestures)
+                return;
+
+            int x = 520;
+            int startY = -130;
+            int spacing = 50;
+
+            for (int i = 1; i <= manualGestureCount; i++)
+            {
+                AnimatorState manualState = sm.AddState("Manual" + i, new Vector3(x, startY + (i - 1) * spacing, 0));
+                manualState.writeDefaultValues = writeDefaults;
+                AddParameterDriver(manualState, false, false);
+                manualStates.Add(manualState);
+            }
         }
 
         private void CreateGestureStates(AnimatorStateMachine sm, AnimatorController controller)
@@ -427,12 +479,19 @@ namespace Terrorized.Editor
         private void CreateTransitions(AnimatorStateMachine sm)
         {
             // Order matters! Add transitions in priority order:
+            // 0. Manual gesture states (if enabled, override everything)
             // 1. Face tracking to Idle transitions (if enabled)
             // 2. Avatar Dynamics _FT states (highest priority during face tracking)
             // 3. Avatar Dynamics regular states
             // 4. Toggle-off to Idle (if Toggle For Gestures enabled)
             // 5. Gesture states (in priority order based on hand setting)
             // 6. Idle transition when both gestures = 0
+
+            // 0. Manual gesture states
+            if (enableManualGestures)
+            {
+                CreateManualGestureTransitions(sm);
+            }
 
             // 1. Face tracking to Idle transitions
             if (disableDuringFaceTracking)
@@ -476,6 +535,35 @@ namespace Terrorized.Editor
 
             // 6. Idle transition when both gestures = 0
             CreateIdleTransition(sm);
+
+            // Normal face logic only runs while ManualGesture = 0
+            if (enableManualGestures)
+            {
+                AddManualGestureGuards(sm);
+            }
+        }
+
+        private void CreateManualGestureTransitions(AnimatorStateMachine sm)
+        {
+            for (int i = 0; i < manualStates.Count; i++)
+            {
+                AnimatorStateTransition transition = sm.AddAnyStateTransition(manualStates[i]);
+                transition.hasExitTime = false;
+                transition.duration = 0.1f;
+                transition.canTransitionToSelf = false;
+                transition.AddCondition(AnimatorConditionMode.Equals, i + 1, ManualGestureParam);
+            }
+        }
+
+        private void AddManualGestureGuards(AnimatorStateMachine sm)
+        {
+            foreach (AnimatorStateTransition transition in sm.anyStateTransitions)
+            {
+                if (manualStates.Contains(transition.destinationState))
+                    continue;
+
+                transition.AddCondition(AnimatorConditionMode.Equals, 0, ManualGestureParam);
+            }
         }
 
         private void CreateHeadpatFTTransition(AnimatorStateMachine sm)
@@ -926,7 +1014,7 @@ namespace Terrorized.Editor
             {
                 driver.parameters.Add(new VRC.SDKBase.VRC_AvatarParameterDriver.Parameter
                 {
-                    name = "AD/HeadpatSync",
+                    name = "Utility/HeadpatSync",
                     value = headpatActive ? 1 : 0,
                     type = VRC.SDKBase.VRC_AvatarParameterDriver.ChangeType.Set
                 });
@@ -936,7 +1024,7 @@ namespace Terrorized.Editor
             {
                 driver.parameters.Add(new VRC.SDKBase.VRC_AvatarParameterDriver.Parameter
                 {
-                    name = "AD/BoopSync",
+                    name = "Utility/BoopSync",
                     value = boopActive ? 1 : 0,
                     type = VRC.SDKBase.VRC_AvatarParameterDriver.ChangeType.Set
                 });
@@ -965,11 +1053,11 @@ namespace Terrorized.Editor
             // Only block when the AD is actually active (check sync parameters for both local and remote)
             if (enableHeadpat && enableHeadpatDuringFaceTracking)
             {
-                lipTransition.AddCondition(AnimatorConditionMode.IfNot, 0, "AD/HeadpatSync");
+                lipTransition.AddCondition(AnimatorConditionMode.IfNot, 0, "Utility/HeadpatSync");
             }
             if (enableBoop && enableBoopDuringFaceTracking)
             {
-                lipTransition.AddCondition(AnimatorConditionMode.IfNot, 0, "AD/BoopSync");
+                lipTransition.AddCondition(AnimatorConditionMode.IfNot, 0, "Utility/BoopSync");
             }
         }
     }
